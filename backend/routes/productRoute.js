@@ -1,0 +1,139 @@
+import express from 'express';
+import Product from '../models/productModel';
+import { isAuth, isAdmin } from '../util';
+import multer from 'multer'
+
+const router = express.Router();
+
+
+const storage = multer.diskStorage({
+  destination: function(req, file, cb){
+    cb(null, '../mysite/public/images/')
+  },
+  filename: function(req, file, cb){
+    cb(null, new Date().toISOString() + file.originalname)
+  }
+})
+
+const fileFilter = (req, file, cb) => {
+  console.log(file)
+  if(file.mimetype === "image/jpeg" || file.mimetype === "image/png"
+  || file.mimetype === "image/jpg")
+    cb(null, true)
+  else
+    cb(new Error("invalid file type"), false)
+}
+
+const upload = multer({storage: storage, limits: {
+    fileSize: 1024 * 1024 * 5
+  },
+  fileFilter: fileFilter
+
+});
+
+router.get('/', async (req, res) => {
+  const category = req.query.category ? { category: req.query.category } : {};
+  const searchKeyword = req.query.searchKeyword
+    ? {
+        name: {
+          $regex: req.query.searchKeyword,
+          $options: 'i',
+        },
+      }
+    : {};
+  const sortOrder = req.query.sortOrder
+    ? req.query.sortOrder === 'lowest'
+      ? { price: 1 }
+      : { price: -1 }
+    : { _id: -1 };
+  const products = await Product.find({ ...category, ...searchKeyword }).sort(
+    sortOrder
+  );
+  res.send(products);
+});
+
+router.get('/:id', async (req, res) => {
+  const product = await Product.findOne({ _id: req.params.id });
+  if (product) {
+    res.send(product);
+  } else {
+    res.status(404).send({ message: 'Product Not Found.' });
+  }
+});
+router.post('/:id/reviews', isAuth, async (req, res) => {
+  const product = await Product.findById(req.params.id);
+  if (product) {
+    const review = {
+      name: req.body.name,
+      rating: Number(req.body.rating),
+      comment: req.body.comment,
+    };
+    product.reviews.push(review);
+    product.reviews = product.reviews.length;
+    product.rating =
+      product.reviews.reduce((a, c) => c.rating + a, 0) /
+      product.reviews.length;
+    const updatedProduct = await product.save();
+    res.status(201).send({
+      data: updatedProduct.reviews[updatedProduct.reviews.length - 1],
+      message: 'Review saved successfully.',
+    });
+  } else {
+    res.status(404).send({ message: 'Product Not Found' });
+  }
+});
+router.put('/:id', isAuth, isAdmin, async (req, res) => {
+  const productId = req.params.id;
+  const product = await Product.findById(productId);
+  if (product) {
+    product.name = req.body.name;
+    product.price = req.body.price;
+    product.imageUrl = req.body.imageUrl;
+    product.madeBy = req.body.madeBy;
+    product.category = req.body.category;
+    product.countInStock = req.body.countInStock;
+    product.description = req.body.description;
+    const updatedProduct = await product.save();
+    if (updatedProduct) {
+      return res
+        .status(200)
+        .send({ message: 'Product Updated', data: updatedProduct });
+    }
+  }
+  return res.status(500).send({ message: ' Error in Updating Product.' });
+});
+
+router.delete('/:id', isAuth, isAdmin, async (req, res) => {
+  const deletedProduct = await Product.findById(req.params.id);
+  if (deletedProduct) {
+    await deletedProduct.remove();
+    res.send({ message: 'Product Deleted' });
+  } else {
+    res.send('Error in Deletion.');
+  }
+});
+
+router.post('/', isAuth, isAdmin, upload.single('productImage'), async (req, res) => {
+    console.log(JSON.stringify(req.body));
+    console.log(req.file)
+  const product = new Product({
+    name: req.body.name,
+    price: req.body.price,
+    imageUrl: "/images/" + req.file.filename,
+    madeBy: req.body.madeBy,
+    category: req.body.category,
+    countInStock: req.body.countInStock,
+    description: req.body.description,
+    rating: req.body.rating,
+    reviews: req.body.reviews
+  });
+  const newProduct = await product.save();
+  if (newProduct) {
+    return res
+      .status(201)
+      .send({ message: 'New Product Created', data: newProduct });
+  }
+  return res.status(500).send({ message: ' Error in Creating Product.' });
+});
+
+export default router;
